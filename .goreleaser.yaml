@@ -1,0 +1,33 @@
+version: 2
+
+builds:
+  - builder: rust
+    tool: cargo
+    command: build
+    targets:
+      - x86_64-unknown-linux-gnu
+      # TODO: add aarch64-unknown-linux-gnu (needs multiarch libpulse-dev:arm64 in CI)
+
+archives:
+  - formats:
+      - tar.gz
+
+nfpms:
+  - package_name: rk-m87-sync
+    description: Sync system time and volume to RK M87 keyboard LCD
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    dependencies:
+      - libpulse0
+    overrides:
+      rpm:
+        dependencies:
+          - pulseaudio-libs
+
+changelog:
+  disable: true
+
+release:
+  use_existing_draft: true

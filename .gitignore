@@ -1,0 +1,17 @@
+# Extracted Windows installer (79MB, proprietary)
+rk_extracted/
+
+# Decrypted firmware chunks
+*_chunk*.bin
+
+# Python
+__pycache__/
+
+# Rust build artifacts
+/target/
+
+# Nix build output
+result
+
+# Claude Code project memory
+.claude/
