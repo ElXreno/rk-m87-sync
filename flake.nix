@@ -22,7 +22,7 @@
         {
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "rk-m87-sync";
-            version = "0.1.0"; # x-release-please-version
+            version = "0.2.0"; # x-release-please-version
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             nativeBuildInputs = with pkgs; [ pkg-config ];
