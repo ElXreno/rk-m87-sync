@@ -1,8 +1,7 @@
-flake:
+rk-m87-sync:
 {
   config,
   lib,
-  pkgs,
   ...
 }:
 let
@@ -12,8 +11,10 @@ in
   options.services.rk-m87-sync = {
     enable = lib.mkEnableOption "RK M87 keyboard time/volume sync daemon";
 
-    package = lib.mkPackageOption pkgs "rk-m87-sync" {
-      inherit (flake.packages.${pkgs.stdenv.hostPlatform.system}) default;
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = rk-m87-sync;
+      description = "The rk-m87-sync package to use.";
     };
 
     device = lib.mkOption {
