@@ -3,7 +3,7 @@ name = "rk-m87-sync"
 version = "0.1.0"
 edition = "2021"
 description = "Sync system time and volume to RK M87 keyboard LCD"
-repository = "https://github.com/ElXreno/royal-cludge-software"
+repository = "https://github.com/ElXreno/rk-m87-sync"
 license = "MIT"
 
 [dependencies]

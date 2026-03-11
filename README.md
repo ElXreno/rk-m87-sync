@@ -30,7 +30,7 @@ Sync system time and volume to the Royal Kludge M87 keyboard LCD on Linux.
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rk-m87-sync = {
-      url = "github:elxreno/royal-cludge-software";
+      url = "github:ElXreno/rk-m87-sync";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -54,7 +54,7 @@ This sets up the systemd user service, udev rules, and the package automatically
 ### Pre-built binaries
 
 Download `.deb`, `.rpm`, or tarball from the
-[Releases](https://github.com/ElXreno/royal-cludge-software/releases) page.
+[Releases](https://github.com/ElXreno/rk-m87-sync/releases) page.
 
 ### Manual build
 
