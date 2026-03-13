@@ -123,7 +123,7 @@ impl SyncState {
         if self.vol_dirty {
             earliest = earliest.min(self.vol_last_change + self.config.debounce);
         }
-        if self.initial_sync_pending || self.device_reconnect_at.is_none() {
+        if self.device_reconnect_at.is_none() {
             earliest = earliest.min(self.next_time_sync);
         }
 
@@ -330,6 +330,25 @@ mod tests {
         // Must NOT fire a second send for the stale vol_dirty
         assert_eq!(s.poll(ms(3200)), None);
         assert_eq!(s.poll(ms(4000)), None); // even after debounce would have expired
+    }
+
+    #[test]
+    fn test_next_deadline_no_busywait_when_device_down() {
+        // Regression: when device is not connected and initial_sync_pending is
+        // true, next_deadline returned Duration::ZERO because next_time_sync
+        // was in the past. This caused a busy-wait loop since poll() returns
+        // None while device is down.
+        let mut s = SyncState::new(fast_config(), ms(0));
+
+        // Device is down from the start
+        s.on_device_lost(ms(0));
+
+        // next_deadline must NOT return zero — it should wait for reconnect
+        let deadline = s.next_deadline(ms(100));
+        assert!(
+            deadline >= ms(1000),
+            "deadline should wait for reconnect delay, got {deadline:?}"
+        );
     }
 
     #[test]
