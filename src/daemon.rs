@@ -111,7 +111,10 @@ fn try_connect_device(
             *logged_waiting = false;
         }
         Err(Error::PermissionDenied { path }) => {
-            warn!("Permission denied on {}", path.display());
+            if !*logged_waiting {
+                warn!("Permission denied on {}", path.display());
+                *logged_waiting = true;
+            }
             state.on_device_lost(epoch.elapsed());
         }
         Err(e) => {

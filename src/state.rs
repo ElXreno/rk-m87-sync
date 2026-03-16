@@ -120,10 +120,10 @@ impl SyncState {
         if let Some(at) = self.pulse_reconnect_at {
             earliest = earliest.min(at);
         }
-        if self.vol_dirty {
-            earliest = earliest.min(self.vol_last_change + self.config.debounce);
-        }
         if self.device_reconnect_at.is_none() {
+            if self.vol_dirty {
+                earliest = earliest.min(self.vol_last_change + self.config.debounce);
+            }
             earliest = earliest.min(self.next_time_sync);
         }
 
@@ -348,6 +348,28 @@ mod tests {
         assert!(
             deadline >= ms(1000),
             "deadline should wait for reconnect delay, got {deadline:?}"
+        );
+    }
+
+    #[test]
+    fn test_next_deadline_no_busywait_vol_dirty_device_down() {
+        // Regression: when vol_dirty debounce expired and device was down,
+        // next_deadline returned Duration::ZERO because vol_last_change +
+        // debounce was in the past. This caused a busy-wait loop since
+        // poll() returns None while device is down.
+        let mut s = SyncState::new(fast_config(), ms(0));
+        s.on_send_ok(ms(0));
+        s.initial_sync_pending = false;
+
+        // Volume changes, then device goes down before debounce fires
+        s.on_volume_changed(50, ms(1000));
+        s.on_device_lost(ms(1200));
+
+        // At ms(1600), debounce has expired (1000+500=1500) but device is down
+        let deadline = s.next_deadline(ms(1600));
+        assert!(
+            deadline >= ms(500),
+            "deadline should wait for reconnect, got {deadline:?}"
         );
     }
 
