@@ -94,7 +94,10 @@ rk-m87-sync --daemon
 
 ## Udev rule
 
-To allow access without root, create `/etc/udev/rules.d/99-rk-m87.rules`:
+To allow access without root, create `/etc/udev/rules.d/70-rk-m87.rules`:
+
+> **Note:** The filename must be numbered before the seat rule so the `uaccess` tag
+> is set before it gets processed.
 
 ```
 # RK M87 keyboard (USB cable)

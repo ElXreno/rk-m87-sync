@@ -2,6 +2,7 @@ rk-m87-sync:
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -31,12 +32,18 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.udev.extraRules = ''
-      # RK M87 keyboard (USB cable)
-      SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="01a2", MODE="0660", TAG+="uaccess"
-      # RK M87 dongle
-      SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="0150", MODE="0660", TAG+="uaccess"
-    '';
+    services.udev.packages = [
+      (pkgs.writeTextFile {
+        name = "rk-m87-udev-rules";
+        destination = "/lib/udev/rules.d/70-rk-m87.rules";
+        text = ''
+          # RK M87 keyboard (USB cable)
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="01a2", MODE="0660", TAG+="uaccess"
+          # RK M87 dongle
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="0150", MODE="0660", TAG+="uaccess"
+        '';
+      })
+    ];
 
     systemd.user.services.rk-m87-sync = {
       description = "RK M87 keyboard time/volume sync";
