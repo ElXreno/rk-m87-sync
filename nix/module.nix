@@ -48,6 +48,7 @@ in
     systemd.user.services.rk-m87-sync = {
       description = "RK M87 keyboard time/volume sync";
       wantedBy = [ "default.target" ];
+      unitConfig.ConditionUser = "!@system";
       after = [
         "pipewire.service"
         "pulseaudio.service"
