@@ -9,7 +9,8 @@ use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 
 use crate::error::{Error, Result};
 use crate::protocol::{
-    self, build_feature_report, build_output_report, Protocol, CMD_ECHO, CMD_SYSPARAM, VID,
+    self, build_feature_report, build_output_report, Protocol, CMD_GET_DONGLE_STATUS, CMD_SYSPARAM,
+    VID,
 };
 
 /// Trait abstracting keyboard HID sends (for testing with mocks).
@@ -194,19 +195,15 @@ impl HidDevice {
         Ok(())
     }
 
-    /// Dongle pre-flight: send Echo (cmdId 0x09) and verify response.
-    pub fn echo_ping(&self) -> Result<bool> {
-        let payload = [0x0E, 0xDE, 0xAD];
-        let pkt = build_output_report(0x13, CMD_ECHO, &payload);
+    pub fn get_dongle_status_ping(&self) -> Result<bool> {
+        let payload: [u8; 0] = [];
+        let pkt = build_output_report(0x13, CMD_GET_DONGLE_STATUS, &payload);
 
         let resp = self.send_and_recv_output(&pkt)?;
         let Some(resp) = resp else {
             return Ok(false);
         };
 
-        if resp[1] & 0x7F != CMD_ECHO {
-            return Ok(false);
-        }
         if resp[1] & 0x80 != 0 {
             return Ok(false);
         }
@@ -215,8 +212,9 @@ impl HidDevice {
 
     /// USB cable pre-flight: send a feature report probe.
     pub fn probe_feature(&self) -> Result<()> {
-        let payload = [0xDE, 0xAD];
-        let mut buf = build_feature_report(self.protocol.report_id(), CMD_ECHO, &payload);
+        let payload: [u8; 0] = [];
+        let mut buf =
+            build_feature_report(self.protocol.report_id(), CMD_GET_DONGLE_STATUS, &payload);
         self.send_feature_report(&mut buf)
     }
 
@@ -308,7 +306,7 @@ pub fn connect(device: Option<&Path>, no_ping: bool) -> Result<HidDevice> {
         };
 
         match det.protocol {
-            Protocol::Dongle if !no_ping => match dev.echo_ping() {
+            Protocol::Dongle if !no_ping => match dev.get_dongle_status_ping() {
                 Ok(true) => return Ok(dev),
                 Ok(false) => {
                     last_error = Some(format!(

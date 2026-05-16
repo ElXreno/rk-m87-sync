@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, Timelike};
 
 pub const VID: u16 = 0x258A;
-pub const CMD_ECHO: u8 = 0x09;
+pub const CMD_GET_DONGLE_STATUS: u8 = 0x07;
 pub const CMD_SYSPARAM: u8 = 0x0B;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,15 +155,12 @@ mod tests {
     }
 
     #[test]
-    fn test_echo_ping_packet() {
-        let payload = [0x0E, 0xDE, 0xAD];
-        let pkt = build_output_report(0x13, CMD_ECHO, &payload);
+    fn test_dongle_status_ping_packet() {
+        let payload: [u8; 0] = [];
+        let pkt = build_output_report(0x13, CMD_GET_DONGLE_STATUS, &payload);
 
         assert_eq!(pkt[0], 0x13);
-        assert_eq!(pkt[1], CMD_ECHO);
-        assert_eq!(pkt[4], 0x03); // meta: len=3
-        assert_eq!(pkt[5], 0x0E);
-        assert_eq!(pkt[6], 0xDE);
-        assert_eq!(pkt[7], 0xAD);
+        assert_eq!(pkt[1], CMD_GET_DONGLE_STATUS);
+        assert_eq!(pkt[4], 0x00); // meta: len=0
     }
 }
