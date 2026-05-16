@@ -1,8 +1,9 @@
 # Extracted Windows installer (79MB, proprietary)
 rk_extracted/
 
-# Decrypted firmware chunks
+# Vendor firmware dumps (chunks, ISP dumps, bootloader) — DO NOT commit
 *_chunk*.bin
+m87_*.bin
 
 # Python
 __pycache__/

@@ -118,22 +118,66 @@ response data in the payload. The host validates:
 
 ## 4. Known Command IDs
 
-| cmdId | Name              | Dir  | Description                                |
-|-------|-------------------|------|--------------------------------------------|
-| 0x01  | Echo              | R/W  | Echoes back the sent data                  |
-| 0x02  | Echo              | R/W  | Echoes back the sent data                  |
-| 0x03  | SetMatrix         | W    | Set key matrix / layer data                |
-| 0x04  | SetProfile        | W    | Write profile data (128 bytes, multi-pkt)  |
-| 0x05  | GetPassword       | R    | Get device password/auth (6 bytes)         |
-| 0x06  | SetPassword       | W    | Set password (no response expected)        |
-| 0x07  | GetDongleStatus   | R    | Dongle/connection status                   |
-| 0x09  | Echo              | R/W  | Echoes back the sent data                  |
-| 0x0A  | SetLedRgbTab      | W    | Set RGB LED color table                    |
-| 0x0B  | **SetScreenParam**| W    | **SysParam: time, volume, CPU, memory**    |
-| 0x0C–0x0F | (Time-related)| W   | Partial time set (legacy/undocumented)     |
-| 0x11  | ResetDevice       | W    | Reset keyboard to defaults                 |
-| 0x12  | SendWeb           | W    | Web/cloud related data                     |
-| 0x44  | GetProfile        | R    | Read profile data (128 bytes, multi-pkt)   |
+**Important:** the dongle (CDev3632) and wired (CDevG5KB) transports use **different
+cmdId numbers for the same operation**. Both tables below were derived from
+`DeviceDriver.exe` decompilation in May 2026 (Ghidra project `rk-m87-smk`).
+
+### Dongle Mode (CDev3632, Report ID 0x13, 20-byte output reports)
+
+| cmdId | Name             | Dir | Description                                      |
+|-------|------------------|-----|--------------------------------------------------|
+| 0x01  | SetMatrix        | W   | Per-key matrix / layer data (multi-packet)       |
+| 0x02  | SetGame          | W   | Per-key RGB color group, `nColorPerKey * 3` bytes |
+| 0x03  | SetMacro         | W   | Macro data, 512-byte chunks (multi-packet)       |
+| 0x04  | SetLED           | W   | 128-byte LED config                              |
+| 0x06  | ResetDevice      | W   | Empty payload (was previously documented as 0x11) |
+| 0x07  | GetDongleStatus  | R   | 1 byte: 0 = wireless connected                   |
+| 0x09  | SetLedRgbTab     | W   | RGB LED table                                    |
+| 0x0B  | **SetScreenParam** | W | **SysParam: time, volume, CPU, memory (see §5)** |
+| 0x0C–0x0F | ⚠ dangerous | W   | Reset/freeze the LCD clock — DO NOT scan        |
+| 0x12  | SendWeb          | W   | Web/cloud data                                   |
+| 0x44  | GetLED           | R   | Read 128-byte LED config                         |
+| 0x4A  | GetVersion       | R   | Read 2-byte firmware version (lo, hi)            |
+| 0x88  | SetRealData      | W   | Runtime status (CDev3632 only; gated by `m_state[0x238]==0`) |
+
+### Wired Mode (CDevG5KB, Feature Report id=m_reportId, 520-byte feature reports)
+
+| cmdId | Name             | Dir | Description                                      |
+|-------|------------------|-----|--------------------------------------------------|
+| 0x03  | SetMatrix        | W   | Note: dongle uses 0x01 for the same op           |
+| 0x04  | SetLED           | W   | Same as dongle                                   |
+| 0x05  | SetMacro         | W   | Note: dongle uses 0x03                           |
+| 0x06  | SetGame          | W   | Note: dongle uses 0x02                           |
+| 0x0A  | SetLedRgbTab     | W   | Note: dongle uses 0x09                           |
+| 0x0B  | SetScreenParam   | W   | Same as dongle                                   |
+| 0x0C  | **AccessData_Page** | W | **LCD image data upload, frame-indexed, per-page CRC** |
+| 0x0D  | **SetGIFParam**  | W   | **LCD GIF playback config (5-byte payload — see §8)** |
+| 0x12  | SendWeb          | W   | Same as dongle                                   |
+| 0x82  | GetPassword      | R   | Read auth bytes                                  |
+| 0x84  | GetLED           | R   | Note: dongle uses 0x44                           |
+
+### Historical mistake
+
+Previous versions of this document labeled cmdIds 0x01/0x02/0x09 as "Echo".
+That was wrong — they are real config commands (SetMatrix/SetGame/SetLedRgbTab).
+The daemon's `echo_ping()` was switched to `get_dongle_status_ping()` (cmdId
+0x07) in May 2026 after a live dump confirmed the previous 3-byte payload
+`[0x0E, 0xDE, 0xAD]` was being persisted into the LED color-table at flash
+offset `0xA800` every session.
+
+### GET cmdIds (high bit set for read direction)
+
+Verified from `DeviceDriver.exe` byte-level RE (May 2026):
+
+| cmdId | Signed | Name          | Returns                                |
+|-------|--------|---------------|----------------------------------------|
+| 0x82  | -0x7E  | GetPassword   | 6 bytes — pairing identifier ("psd")  |
+| 0x83  | -0x7D  | GetMatrix     | per-key matrix data                    |
+| 0x84  | -0x7C  | GetLED        | 128 bytes — LED config                 |
+| 0x85  | -0x7B  | GetRgb        | LED RGB table data                     |
+| 0x87  | -0x79  | GetPower      | 2 bytes — battery + charging status    |
+| 0x88  | -0x78  | GetRealData   | live RGB streaming readback            |
+| 0x8A  | -0x76  | (unknown)     | TBD                                    |
 
 ### cmdId 0x0B — SetScreenParam (SysParam)
 
@@ -276,6 +320,38 @@ CDev3632          — Base class, uses Report 0x13 output reports (WriteFile)
 
 The M87 via dongle uses `CDev3632::SetScreenParam` (vtable 0x48) which calls
 `CDev3632::AccessData` with cmdId=0x0B.
+
+### Named DeviceDriver.exe entry points (May 2026 RE)
+
+| Address | Function | Role |
+|---------|----------|------|
+| 0x00410230 | `CDevG5KB_SetScreenParam` | wired path for SysParam (cmd 0x0B) |
+| 0x0040DE90 | `CDev3632_SetScreenParam` | dongle path for SysParam (cmd 0x0B) |
+| 0x004128A0 | `CDevG5KB_SetGIFParam` | LCD GIF param (cmd 0x0D) |
+| 0x0040E570 | `CDev3632_SetRealData` | live RGB streaming (cmd 0x88) |
+| 0x00410230 | `CDevG5KB_GetLED` | read 128 B LED config (cmd 0x84) |
+| 0x0040FD10 | `CDevG5KB_GetPower` | read battery + charging (cmd 0x87) |
+| 0x004103E0 | `CDevG5KB_GetPassword` | read 6 B psd (cmd 0x82) |
+| 0x00410045 | `CDevG5KB_GetRealData` | read live RGB (cmd 0x88) |
+| 0x00410360 | `SendWeb_dispatch` | cmd 0x12 SendWeb |
+| 0x004101B0 | `SetLedRgbTab_dispatch` | wired cmd 0x0A / dongle cmd 0x09 |
+| 0x0040F9C0 | `SetMatrix_dispatch` | wired cmd 0x03 / dongle cmd 0x01 |
+| 0x0040DD60 | `CDev3632_SetMacro` | dongle cmd 0x03 SetMacro |
+| 0x0040D6A0 | `CDev3632_FindDevice_OpenHandle` | enumerate dongle by VID/PID |
+| 0x0040EE90 | `CDevG5KB_InitialDriver` | wired init |
+| 0x0040F350 | `CDevG5KB_FindHIDDevice` | wired enumerate |
+| 0x0040F030 | `FindScreenDevice_ByPsd` | locate screen MCU via psd match (cmd 0x82) |
+| 0x004168B0 | `GetFirmwareVersion_3632` | read FW version |
+| 0x00411BA0 | `CDevG5KB_ApplySetting` | apply matrix/macro/LED/sysparam in sequence |
+| 0x0040E690 | `CDev3632_ApplySetting` | dongle ApplySetting |
+| 0x00411700 | `FillCfg_LowDaly` | build 128 B SetLED payload (low debounce/tap) |
+| 0x00411900 | `FillCfg_HighDaly` | build 128 B SetLED payload (high range) |
+| 0x00448100 | `LoadProfile_rkf` | load .rkf profile |
+| 0x00448530 | `SaveProfile_rkf` | save .rkf profile |
+| 0x004566E0 | `SysParam_Thread` | periodic 14 B SysParam sender |
+| 0x0045B090 | `GetSystemVolume_IAudioEndpoint` | Windows volume via COM |
+| 0x0045AFD0 | `GetCPUUsage_PDH` | PDH-based CPU usage |
+| 0x004533D0 | `LoadCfgIni` | parse cfg.ini OPT keys |
 
 ### CDev3632::AccessData (FUN_0040d7e0)
 
@@ -432,6 +508,99 @@ fcntl.ioctl(fd, HIDIOCSFEATURE(520), buf)
 
 ---
 
+## 9b. LCD Image Upload (wired only)
+
+The LCD GIF/image upload uses two cmdIds in sequence over the wired CDevG5KB
+feature-report protocol. The dongle path has **no LCD image support** —
+dongle vtable[0x50] (SetGIFParam slot) is a stub. Image uploads must go
+over USB cable.
+
+### Dual-HID architecture
+
+The CDevG5KB device object has two HID handles:
+- `m_hDev1` (`+0x04`) — main keyboard interface (reportId read from HID descriptor)
+- `m_hDev2` (`+0x08`) — **screen daughterboard interface** (reportId = `0x09` hardcoded)
+
+The screen daughterboard appears to Linux as a **separate hidraw device**
+on the same composite USB device. For image upload, `m_hDev2` is preferred.
+The main daemon currently only opens `m_hDev1` — to upload images we'd need
+to enumerate and open both.
+
+### cmdId 0x0D — SetGIFParam
+
+5-byte payload, sent once per upload session to declare what GIF is coming:
+
+```
+Offset  Field             Description
+──────  ────────────────  ──────────────────────────────────────
+  0     idxBits           (isScreen2 << 6) | (gifIndex & 0x3F)
+  1-2   nFrameNum (LE)    Total frame count in this GIF (16-bit)
+  3-4   nGIFDelay (LE)    Per-frame delay in ms (16-bit)
+```
+
+After SetGIFParam, the app awaits a confirmation response. If `m_hDev2`
+is also present, the same SetGIFParam is **re-sent to the screen handle**
+with reportId 0x09.
+
+### cmdId 0x0C — AccessData_Page
+
+Bulk image data, **one page (≤512 bytes) per packet**, frame-indexed,
+with a per-page CRC that the daughterboard validates and echoes back:
+
+```
+Offset  Field             Description
+──────  ────────────────  ──────────────────────────────────────
+  0     reportId          0x09 if sending to screen handle (m_hDev2)
+  1     cmdId             0x0C
+  2     board             0
+  3     frameIdx          Which frame of the GIF this page belongs to
+  4     pageIdx           Cumulative page counter across all frames
+  5     CRC               (-1 - sum(payload[0..len-1])) & 0xFF
+  6-7   dataLen (LE)      Payload length, max 0x200 = 512
+  8-519 payload           Frame pixel data (up to 512 bytes)
+```
+
+CRC enabled by global `DAT_00611844` in the Windows app — when `0`, the
+field is left as 0 and the daughterboard skips the check.
+
+### Response / retry loop
+
+After each page, the daughterboard ACKs via an async HID read with the
+following meaningful bytes in the response:
+- byte `+3`: validity flag, **must be non-zero**, else "respond unmatch"
+- byte `+0` (in resp): echoes `pageIdx`
+- byte `+1` (in resp): echoes CRC
+
+If the CRC does not match, the app logs:
+```
+CDevG5KB::AccessData_Page frame=%d, page=%d, CRC(out)=%x, CRC(in)=%x
+```
+and retries that page. After all pages are acknowledged, the GIF buffer
+on the daughterboard is loaded; the previously sent `SetGIFParam`
+parameters drive playback.
+
+### End-to-end flow
+
+```
+1. User picks image in CBurnScreenDlg (DeviceDriver.exe vtable[0x4C])
+2. App computes frame indices (FUN_00466330 interpolates if user wants
+   more frames than the source has)
+3. SetGIFParam(gifIndex, nFrameNum, nGIFDelay) → cmdId 0x0D
+4. For each frame:
+     For each page (frame_bytes / 512):
+       AccessData_Page(frameIdx, pageIdx, payload) → cmdId 0x0C
+       wait ACK + verify CRC
+       retry on mismatch
+5. Daughterboard renders the GIF on the LCD per (nFrameNum, nGIFDelay)
+```
+
+This is the path that ultimately drives the chunk-2 → daughterboard
+`[0x5A, cmd, len, sub, CRC]` 5-byte abstract-command protocol — **chunk-1**
+receives `0x0C`-cmdId pages over HID, then forwards them to chunk-2 over
+SPI which in turn translates to the daughterboard's internal protocol.
+
+---
+
 ## 10. Linux Implementation
 
 ### Auto-Detection
@@ -444,9 +613,18 @@ protocol to use.
 ### Pre-Flight Check (Dongle Mode)
 
 In dongle mode, the keyboard may be powered off while the dongle is
-plugged in. The script sends an Echo command (cmdId 0x09) and verifies
-the response before syncing. In USB cable mode this is unnecessary —
-if the hidraw device exists, the keyboard is connected and powered on.
+plugged in. The daemon sends cmdId `0x07` (`GetDongleStatus`) with an empty
+payload and accepts any non-error response as proof of life. This is a
+genuine read with no side effects.
+
+The earlier daemon implementation sent cmdId `0x09` with a 3-byte payload
+`[0x0E, 0xDE, 0xAD]`. That is actually `SetLedRgbTab`, so each session
+wrote those three bytes into the keyboard's LED color-table at flash
+offset `0xA800` (confirmed by live dump May 2026). The current code uses
+`GetDongleStatus` and avoids any persistent state change.
+
+In USB cable mode the probe is unnecessary — if the hidraw device exists,
+the keyboard is connected and powered on.
 
 ### Permissions
 
@@ -468,21 +646,31 @@ pactl get-sink-volume @DEFAULT_SINK@
 
 ---
 
-## 11. Firmware Architecture (3 MCUs)
+## 11. Firmware Architecture (3 MCUs — all SH68F90A 8051)
 
-The M87 keyboard contains **three microcontrollers** communicating over SPI:
+The M87 ecosystem contains **three SH68F90A 8051 microcontrollers**. Verified
+2026-05-16 by live dump of the dongle via `sinowealth-kb-tool`, which
+confirmed the dongle is an 8051 SH68F90A (not the Cortex-M0 / "SH68F1000J"
+suggested by its silkscreen).
 
 ```
 ┌─────────────────┐     SPI     ┌─────────────────┐
-│  Keyboard MCU   │────────────▶│ Screen Controller│──▶ LCD
-│  (chunk1, 8051  │◀────────────│  (chunk2, 8051)  │   320×172
-│   SH68F90A)     │             └─────────────────┘
-│                 │
-│  Keymatrix,     │     2.4GHz  ┌─────────────────┐
-│  Encoder,       │◀───────────▶│  Dongle BLE MCU  │──▶ USB host
-│  USB HID        │             │  (chunk0, ARM)   │
-└─────────────────┘             └─────────────────┘
+│  Keyboard MCU   │────────────▶│ Screen Controller│──▶ LCD daughterboard
+│  (chunk 1,      │◀────────────│  (chunk 2,      │    320×172
+│   SH68F90A 8051)│             │   SH68F90A 8051)│
+│                 │             └─────────────────┘
+│  Keymatrix,     │     2.4 GHz ┌─────────────────┐
+│  Encoder,       │◀───────────▶│  Dongle MCU     │──▶ USB host
+│  USB HID        │             │  (chunk 0,      │
+└─────────────────┘             │   SH68F90A 8051)│
+                                 └─────────────────┘
 ```
+
+The 2.4 GHz radio is **integrated** in each SH68F90A via the CCP
+(capture/compare) module + dedicated TX/RX SFRs (`TXSTAT`, `TXDAT`, `TXCON`,
+`TXFLG`, `TXCNTL/H`, `RXSTAT/DAT/CON/FLG`, `WCON`); no external transceiver.
+The LCD daughterboard is a **separate physical chip** (not yet dumped) that
+chunk 2 drives over SPI using a `[0x5A, cmd, len, sub, CRC]` 5-byte protocol.
 
 ### Keyboard MCU → Screen Controller SPI Protocol
 
@@ -535,6 +723,249 @@ Encoder tick ──────────▶ Keyboard MCU ──SPI──▶ S
 | 0x0F1A  | flagsA         | Bit 0=SysParam pending                               |
 | 0x0F1B  | flagsB         | Bit 5=element dispatch, Bit 6=volume bar trigger     |
 | 0x0F65  | displayMode    | Active display mode (affects encoder behavior)       |
+
+---
+
+## 11b. Firmware Update Protocol (Update.exe)
+
+Royal Kludge ships `Update.exe` (a Sinowealth 8805 USB update tool, build
+`20231113 V1.22 SPEC0.6`) to flash new firmware. The protocol is HID-feature-
+report based and uses two interfaces simultaneously.
+
+### Two HID interfaces
+
+Update.exe enumerates two HID interfaces by feature-report size:
+
+| Interface | Feature size | Purpose |
+|---|---|---|
+| `m_hControl` | 6 bytes | Small control commands |
+| `m_hBulk` | 2050 bytes (or 1032 for BLE) | Bulk data write/read |
+
+### Three modes for three chunks
+
+The UPF file (`.upf`) packs 1–3 firmware chunks. The `chunk_mode` byte in
+the header selects which chunks are present:
+
+| mode | chunks | applied to |
+|---|---|---|
+| 0 | BLE + HID | dongle MCU + keyboard MCU |
+| 1 | BLE only | dongle MCU |
+| 2 | HID only | keyboard MCU (chunk 1) |
+| 3 | BLE + HID + MFU | all three (chunk 0 + 1 + 2) |
+
+- **HID mode** → chunk 1 (keyboard SH68F90A)
+- **MFU mode** → chunk 2 (screen SH68F90A)
+- **BLE mode** → chunk 0 (dongle SH68F90A; named "BLE" historically but
+  the dongle uses 2.4 GHz proprietary radio, not Bluetooth Low Energy)
+- HID and MFU use the **identical wire protocol**; only the target chunk differs.
+
+### Control-channel commands (reportId 0x05, 6-byte feature reports)
+
+Byte 1 is the cmd opcode — an **ASCII mnemonic** for the action:
+
+| Cmd | Char | Operation | Bytes 2–5 |
+|---|---|---|---|
+| `0x45` | 'E' | Enter ISP mode (effectively: **Erase ALL** user firmware — pages 0x00..0x3B; writes `[02, 00, 00]` at addr 0 + `[F0, 00, 01]` at addr 1 as safety. Verified via byte-level RE of `isp_set_report_handler @ dongle:0xF48C` 2026-05-16) | `0x45 0x45 0x45 0x45` (filler magic) |
+| `0x52` | 'R' | Setup read window | `addr_lo addr_hi len_lo len_hi` |
+| `0x57` | 'W' | Setup write window / begin transfer | `addr_lo addr_hi len_lo len_hi` |
+| `0x65` | 'e' | Erase page at addr | `addr_lo addr_hi 0 0` (200 ms sleep follows) |
+| `0x72` | 'r' | Read 4-byte data | (no args; issued after 'R' setup) |
+| `0x77` | 'w' | Write 4-byte data inline | `b0 b1 b2 b3` |
+| `0x55` | 'U' | Upgrade finalize | `0x55 0x55 0x55 0x55` (filler magic) |
+| `0x5A` | 'Z' | Reset / reboot device | `0 0 0 0` |
+
+`HidD_GetFeature` on the control HID returns 6 bytes; byte 1 is the status:
+- `0x00` — success
+- `0x55` ('U') — busy, retry
+- `0xCB` (= `-0x35`) — handshake success
+- `0xFF` — error / fatal
+
+### Bulk-data packet (reportId 0x06, 2050 bytes for HID/MFU)
+
+```
+byte 0:    0x06           (report ID)
+byte 1:    0x77 or 0x72   (write or read)
+bytes 2..: 2048 bytes of payload
+```
+
+### Bootloader entry (chunk 1)
+
+The application firmware must transition into ISP/bootloader mode before
+any of the control commands above are accepted. The chunk-1 firmware
+recognises a Feature Report 5 SET_REPORT carrying `[0x05, 0x75]` as the
+trigger. `process_isp_state_machine @ chunk1:0x8907` requires
+`EXTMEM:0x1100 == 0x05` and `EXTMEM:0x1101 == 0x75 ('u')`, then calls
+`enter_isp_full @ 0xB0ED`. From Linux:
+`ioctl(fd, HIDIOCSFEATURE(N), [0x05, 0x75, ...])`.
+
+Once in the bootloader, `isp_set_report_handler @ dongle_bootloader:0xF48C`
+processes the ASCII commands listed above. Sending `'E'` (`[0x05, 0x45*5]`)
+**erases the entire user firmware** (pages 0x00..0x3B, 60 pages) and is
+the first step of an upgrade — not a benign "enter ISP" handshake.
+
+### BLE upgrade entry
+
+Update.exe uses a different entry sequence for the dongle/BLE upgrade
+mode (`EnterBootloader_via_HID @ Update.exe:0x00409760`):
+
+```
+1. HidD_SetFeature: [0x05, 0xC9, 0x60, ...]
+2. Poll HidD_GetFeature for [0x60, status, ...] response
+3. status byte:
+     0x00  → success, enter upgrade thread
+     0x55  → busy, retry
+     0xFF  → fatal error
+```
+
+This matches the firmware path in `chunk2_handle_set_report` (state 9
++ `1101 == 0xC9` → `dispatch_p_or_backtick`). The 0xC9/0x60 handshake is
+the canonical "BLE upgrade mode" entry.
+
+### HID / MFU upgrade flow
+
+```
+1. ENTER BOOTLOADER: SET_REPORT [0x05, 0x75, ...] (or 0xC9 0x60 for BLE);
+                     wait for ACK
+2. ERASE ALL:        control [0x05, 0x45, 0x45, 0x45, 0x45, 0x45]; sleep 2000 ms
+3. BEGIN WRITE:      control [0x05, 0x57, 0x00, 0x00, len_lo, len_hi]
+4. WRITE LOOP:       for page i = 0..(chunk_size/2048):
+                       bulk [0x06, 0x77, page_data[2048]]   ; first page has data[0]=0
+5. END WRITE:        control [0x05, 0x57, 0x00, 0x00, len_lo, len_hi]  (re-sent)
+6. BEGIN VERIFY:     control [0x05, 0x52, 0x00, 0x00, len_lo, len_hi]
+7. VERIFY LOOP:      for page i = 0..(chunk_size/2048):
+                       HidD_GetFeature(bulk_handle, buf, 2050)
+                       compare buf[2..2049] vs page_data[i]
+8. (HID only) PRESERVE 0xFF80 IDENTITY: read 4 bytes, erase page, write back
+   with PID/VID overlay.
+9. FINALIZE:         control [0x05, 0x55, 0x55, 0x55, 0x55, 0x55]
+10. RESET:           control [0x05, 0x5A, 0x00, 0x00, 0x00, 0x00]
+```
+
+### BLE upgrade flow
+
+Uses 1032-byte feature reports with cmd `0xC9/0x05/0x02` for version
+exchange. The chunk-write command is `0xCB`:
+
+```
+data channel (Report 0x06, 1032 bytes):
+  [06, CB, sub, page_num, ~page_num, data(1024B), CRC_lo, CRC_hi]
+  subcmd 0x02 = full 1024-byte chunk
+  subcmd 0x01 = ≤128-byte final chunk
+  CRC = CRC-16-CCITT (poly 0x1021, init 0x0000) over the firmware data
+```
+
+Status polling uses Report 0x05 (6 bytes); byte 0 = `0xCB` (or `'p'`=0x70
+for finalize), byte 1 = `0x00` success / `0x55` busy / `0xFF` error.
+
+### TX* SFRs are multiplexed (Sinowealth quirk)
+
+The same `TXSTAT/TXDAT/TXCON/TXFLG/TXCNTH/CCAP1H/CCAP2H` SFRs that drive
+the 2.4 GHz radio in the user firmware are repurposed by the bootloader
+as **flash erase/program controllers**. `isp_erase_page @ 0xFB9E` and
+`isp_write_byte_to_flash @ 0xFB6B` route through these registers. This
+is why a single chip can both transmit radio packets and self-flash
+without dedicated programming pins.
+
+### UPF file format
+
+```
+offset  size  field            BE/LE  notes
+──────  ────  ──────────────   ─────  ──────────────────────
+  0      1   marker1                  0x5A ('Z')
+  1      1   marker2                  0xA5
+  2      7   magic                    "BLESINO"
+  9      1   chunk_mode               0/1/2/3 (see table)
+ 10      7   version1                 display
+ 17      2   PID              BE      keyboard USB PID
+ 19      2   VID              BE      keyboard USB VID
+ 21      2   BLE_PID          BE      dongle USB PID
+ 23      2   BLE_VID          BE      dongle USB VID
+ 25      1   flag                     unknown
+ 26      6   version2                 display
+ 32      6   blockData
+ 38      6   version3                 display
+ 44      4   BLE_chunk_size   BE      chunk 0 length
+ 48      4   HID_chunk_size   BE      chunk 1 length
+ 52      4   ver_fw1          mixed
+ 56      4   ver_fw2          mixed
+ 60      6   version4                 display
+ 66      4   MFU_chunk_size   BE      chunk 2 length (only if mode==3)
+ ...
+ 0x80    N   ciphertext               concatenated TEA-encrypted chunks
+ EOF-4   4   key                      4-byte TEA key
+```
+
+**Encryption:** modified TEA with delta `0x9E3769B9` (note: not the standard
+`0x9E3779B9`), 32 rounds, 8-byte blocks treated as big-endian uint32 pairs.
+Key is 4 bytes at the end of the file; each byte is zero-extended to a uint32
+to form the 16-byte expanded key. M87 key: `04 a3 ce 69`.
+
+A working decryptor is at `scripts/decrypt_upf.py`.
+
+### Implications for Linux
+
+To replicate the update flow from Linux:
+1. Enumerate both HID interfaces (control = 6-byte feature, bulk = 2050-byte
+   feature).
+2. Run the sequence above via `ioctl(HIDIOCSFEATURE)` / `HIDIOCGFEATURE`.
+3. After the `0x5A` reset packet, the keyboard reboots into the new firmware.
+
+The same ISP server that responds to these commands is also reachable via
+the `LJMP 0xFF00` boot-key recovery shim — so a software-only brick recovery
+should be feasible (no external programmer needed, provided the bootloader
+isn't corrupted).
+
+The bootloader entry at `0xFF00` (`isp_bootloader_entry_5a_a5`) requires
+the magic byte pair `[0x5A, 0xA5]` in the register pair — the same magic
+as the UPF file header marker.
+
+---
+
+## 11c. Chunk-2 Direct LCD Control (undocumented)
+
+Chunk 2 (screen MCU) has its **own USB SET_REPORT handler**
+(`chunk2_handle_set_report @ 0x1249`, dispatched from
+`chunk2_usb_packet_state_machine @ 0x0D1D`) that mirrors chunk 1's. The
+USB SETUP packet dispatcher table at `chunk2:CODE:0x15C7` is byte-for-byte
+identical to chunk 1's at `chunk1:CODE:0xA2C2`.
+
+For `SET_REPORT(Feature, Report 5, iface 0)` with payload starting
+`[0x05, 0xC9, byte2, byte3]`, the firmware calls
+`dispatch_p_or_backtick(byte3, byte2)`:
+
+- `byte2 == 'p' (0x70)` → `EXTMEM:0x42 = 4` → mode-4 LCD refresh
+- `byte2 == '\`' (0x60)` → `EXTMEM:0x42 = 0x80` → encoder UP packet
+  `[0x5A, 0x80, 5, 0, CRC]` sent to the daughterboard
+
+This is a **direct LCD-control path that bypasses chunk 1** entirely
+and is useful for debugging the daughterboard. The same `[0x05, 0x75]`
+sequence on chunk 2 triggers `halt_baddata_1f9c` (chunk-2's
+"transition to bootloader" — disables IRQ then halts to let the
+bootloader take over).
+
+---
+
+## 11d. .rkf Profile File Format
+
+DeviceDriver.exe saves keyboard profiles to disk as `.rkf` files via
+`SaveProfile_rkf @ 0x00448530` / `LoadProfile_rkf @ 0x00448100`. The format
+is fixed-size, 24,332 bytes (`0x5F0C`):
+
+```
+offset  size   field            notes
+──────  ────   ──────────────   ────────────────────────────────
+0x00    0x40   header           model name, magic, etc.
+0x40    2      PID              keyboard USB PID (e.g. 0x01AF)
+0x44    4      magic            0xFCFB999A (little-endian)
+0x48    8      reserved
+0x50    N      key info data    4 layers × 132 keys × 16 bytes
+0x21D8  N      macro buffers    10 macro slots × 834 bytes
+```
+
+The PID at offset `0x40` enforces per-model compatibility — loading a
+profile saved on a different keyboard model triggers a "wrong profile
+data" warning. Each key info entry is 16 bytes encoding the key type,
+HID code, and any macro/layer reference.
 
 ---
 
