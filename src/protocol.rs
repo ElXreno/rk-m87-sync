@@ -27,10 +27,8 @@ impl Protocol {
 }
 
 /// Known USB PIDs and their protocols.
-pub const KNOWN_DEVICES: &[(u16, Protocol)] = &[
-    (0x0150, Protocol::Dongle),
-    (0x01A2, Protocol::UsbCable),
-];
+pub const KNOWN_DEVICES: &[(u16, Protocol)] =
+    &[(0x0150, Protocol::Dongle), (0x01A2, Protocol::UsbCable)];
 
 /// Build the 14-byte SysParam payload (shared between both protocols).
 pub fn build_sysparam_payload(volume: u8, now: &chrono::DateTime<Local>) -> [u8; 14] {
@@ -122,7 +120,9 @@ mod tests {
 
     #[test]
     fn test_output_report_crc() {
-        let payload = [0x41u8, 0, 0, 0xEA, 0x07, 0x03, 0x0A, 0x0E, 0x1E, 0x2D, 0x02, 0, 0, 0];
+        let payload = [
+            0x41u8, 0, 0, 0xEA, 0x07, 0x03, 0x0A, 0x0E, 0x1E, 0x2D, 0x02, 0, 0, 0,
+        ];
         let pkt = build_output_report(0x13, CMD_SYSPARAM, &payload);
 
         assert_eq!(pkt[0], 0x13);
@@ -138,7 +138,9 @@ mod tests {
 
     #[test]
     fn test_feature_report_header() {
-        let payload = [0x41u8, 0, 0, 0xEA, 0x07, 0x03, 0x0A, 0x0E, 0x1E, 0x2D, 0x02, 0, 0, 0];
+        let payload = [
+            0x41u8, 0, 0, 0xEA, 0x07, 0x03, 0x0A, 0x0E, 0x1E, 0x2D, 0x02, 0, 0, 0,
+        ];
         let buf = build_feature_report(0x09, CMD_SYSPARAM, &payload);
 
         assert_eq!(buf[0], 0x09);

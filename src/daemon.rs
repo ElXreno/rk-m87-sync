@@ -5,12 +5,12 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::error::{Error, Result};
-use crate::hid::{self, HidDevice};
 #[cfg(test)]
 use crate::hid::KeyboardSink;
+use crate::hid::{self, HidDevice, LinkState};
 use crate::protocol::build_sysparam_payload;
 use crate::state::{SyncAction, SyncConfig, SyncState};
 use crate::volume::{self, DaemonEvent};
@@ -27,9 +27,18 @@ pub fn watch_loop(device_path: Option<&Path>, no_ping: bool) -> Result<()> {
     let mut device: Option<HidDevice> = None;
     let mut pa_handle: Option<JoinHandle<()>> = None;
     let mut logged_waiting = false;
+    let mut keyboard_awake = true;
 
     // Initial connections
-    try_connect_device(&mut device, &mut state, device_path, no_ping, &epoch, &mut logged_waiting);
+    try_connect_device(
+        &mut device,
+        &mut state,
+        device_path,
+        no_ping,
+        &epoch,
+        &mut logged_waiting,
+        &mut keyboard_awake,
+    );
     try_spawn_pulse(&mut pa_handle, &mut state, &tx, &shutdown);
 
     loop {
@@ -60,15 +69,24 @@ pub fn watch_loop(device_path: Option<&Path>, no_ping: bool) -> Result<()> {
                         let payload = build_sysparam_payload(vol, &wall);
                         match dev.send_sysparam(&payload) {
                             Ok(true) => {
+                                if !keyboard_awake {
+                                    info!("Keyboard responding again");
+                                    keyboard_awake = true;
+                                }
                                 info!("Synced: vol={vol}% time={}", wall.format("%H:%M:%S"));
                                 state.on_send_ok(now);
                             }
-                            other => {
-                                if let Err(e) = other {
-                                    warn!("Send error: {e}, reconnecting...");
+                            Ok(false) => {
+                                let delay = state.on_send_no_ack(now);
+                                if keyboard_awake {
+                                    info!("Keyboard asleep, waiting for it to come back");
+                                    keyboard_awake = false;
                                 } else {
-                                    warn!("No response from keyboard, reconnecting...");
+                                    debug!("Still asleep, next attempt in {}s", delay.as_secs());
                                 }
+                            }
+                            Err(e) => {
+                                warn!("Send error: {e}, reconnecting...");
                                 state.on_device_lost(now);
                                 device = None;
                             }
@@ -76,10 +94,33 @@ pub fn watch_loop(device_path: Option<&Path>, no_ping: bool) -> Result<()> {
                     }
                 }
                 SyncAction::ConnectDevice => {
-                    try_connect_device(&mut device, &mut state, device_path, no_ping, &epoch, &mut logged_waiting);
+                    try_connect_device(
+                        &mut device,
+                        &mut state,
+                        device_path,
+                        no_ping,
+                        &epoch,
+                        &mut logged_waiting,
+                        &mut keyboard_awake,
+                    );
                 }
                 SyncAction::SpawnPulseMonitor => {
                     try_spawn_pulse(&mut pa_handle, &mut state, &tx, &shutdown);
+                }
+                SyncAction::PollLinkState => {
+                    if let Some(dev) = &device {
+                        match dev.link_state() {
+                            Ok(link) => {
+                                debug!("Dongle reports keyboard link {link:?}");
+                                state.on_link_state(now, link == LinkState::Up);
+                            }
+                            Err(e) => {
+                                warn!("Dongle status failed: {e}, reconnecting...");
+                                state.on_device_lost(now);
+                                device = None;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -102,11 +143,25 @@ fn try_connect_device(
     no_ping: bool,
     epoch: &Instant,
     logged_waiting: &mut bool,
+    keyboard_awake: &mut bool,
 ) {
     match hid::connect(device_path, no_ping) {
         Ok(dev) => {
-            info!("Connected: {} ({})", dev.path.display(), dev.protocol.label());
-            state.on_device_connected(epoch.elapsed());
+            info!(
+                "Connected: {} ({})",
+                dev.path.display(),
+                dev.protocol.label()
+            );
+            let now = epoch.elapsed();
+            state.on_device_connected(now);
+            *keyboard_awake = true;
+            if let Ok(link) = dev.link_state() {
+                state.on_link_state(now, link == LinkState::Up);
+                if link == LinkState::Down {
+                    info!("Keyboard asleep, waiting for it to come back");
+                    *keyboard_awake = false;
+                }
+            }
             *device = Some(dev);
             *logged_waiting = false;
         }
@@ -143,9 +198,8 @@ fn try_spawn_pulse(
 fn spawn_signal_thread(tx: Sender<DaemonEvent>, shutdown: Arc<AtomicBool>) {
     use signal_hook::iterator::Signals;
 
-    let mut signals =
-        Signals::new([signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM])
-            .expect("failed to register signals");
+    let mut signals = Signals::new([signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM])
+        .expect("failed to register signals");
 
     std::thread::Builder::new()
         .name("signal".into())
@@ -249,6 +303,9 @@ mod tests {
                     SyncAction::SpawnPulseMonitor => {
                         state.on_pulse_connected();
                     }
+                    SyncAction::PollLinkState => {
+                        state.on_link_state(now, true);
+                    }
                 }
             }
 
@@ -268,6 +325,9 @@ mod tests {
             time_sync_interval: Duration::from_secs(600),
             max_poll_timeout: Duration::from_millis(100),
             reconnect_delay: Duration::from_millis(100),
+            retry_base: Duration::from_millis(100),
+            retry_max: Duration::from_millis(400),
+            status_poll_interval: Duration::from_millis(50),
         }
     }
 

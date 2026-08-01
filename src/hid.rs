@@ -37,6 +37,13 @@ fn hidiocsfeature(size: usize) -> libc::c_ulong {
         | 0x06
 }
 
+/// Wireless link state between dongle and keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    Up,
+    Down,
+}
+
 pub struct DetectedDevice {
     pub path: PathBuf,
     pub protocol: Protocol,
@@ -80,9 +87,9 @@ pub fn find_devices() -> Vec<DetectedDevice> {
         let Some(proto) = matched else { continue };
 
         // Must be input1 (interface 1 = vendor config channel)
-        let is_input1 = uevent.lines().any(|line| {
-            line.starts_with("HID_PHYS=") && line.ends_with("/input1")
-        });
+        let is_input1 = uevent
+            .lines()
+            .any(|line| line.starts_with("HID_PHYS=") && line.ends_with("/input1"));
         if !is_input1 {
             continue;
         }
@@ -99,7 +106,9 @@ pub fn find_devices() -> Vec<DetectedDevice> {
 /// Look up the protocol for a manually-specified hidraw device.
 pub fn get_protocol_for_device(path: &Path) -> Option<Protocol> {
     let name = path.file_name()?.to_str()?;
-    let uevent_path = Path::new("/sys/class/hidraw").join(name).join("device/uevent");
+    let uevent_path = Path::new("/sys/class/hidraw")
+        .join(name)
+        .join("device/uevent");
     let uevent = std::fs::read_to_string(uevent_path).ok()?;
     let uevent_upper = uevent.to_uppercase();
     let vid_str = format!("{:08X}", VID);
@@ -196,18 +205,41 @@ impl HidDevice {
     }
 
     pub fn get_dongle_status_ping(&self) -> Result<bool> {
-        let payload: [u8; 0] = [];
-        let pkt = build_output_report(0x13, CMD_GET_DONGLE_STATUS, &payload);
-
-        let resp = self.send_and_recv_output(&pkt)?;
-        let Some(resp) = resp else {
-            return Ok(false);
-        };
-
-        if resp[1] & 0x80 != 0 {
-            return Ok(false);
+        match self.link_state() {
+            Ok(_) => Ok(true),
+            Err(Error::DeviceDisconnected { .. }) | Err(Error::Crc) => Ok(false),
+            Err(e) => Err(e),
         }
-        Ok(true)
+    }
+
+    /// Ask the dongle whether the keyboard is currently reachable.
+    ///
+    /// The dongle answers GetDongleStatus on its own, so a reply only proves
+    /// the dongle is alive; the payload byte carries the wireless link state.
+    /// Measured on an M87 dongle (PID 0x0150): `01` while the keyboard is
+    /// awake and acknowledging SysParam, `00` once it falls asleep.
+    pub fn link_state(&self) -> Result<LinkState> {
+        if self.protocol == Protocol::UsbCable {
+            return Ok(LinkState::Up);
+        }
+
+        let payload: [u8; 0] = [];
+        let pkt = build_output_report(self.protocol.report_id(), CMD_GET_DONGLE_STATUS, &payload);
+
+        let Some(resp) = self.send_and_recv_output(&pkt)? else {
+            return Err(Error::DeviceDisconnected {
+                path: self.path.clone(),
+            });
+        };
+        if resp[1] & 0x80 != 0 {
+            return Err(Error::Crc);
+        }
+
+        Ok(if resp[5] == 0 {
+            LinkState::Down
+        } else {
+            LinkState::Up
+        })
     }
 
     /// USB cable pre-flight: send a feature report probe.
@@ -276,7 +308,10 @@ fn hex(bytes: &[u8]) -> String {
 pub fn connect(device: Option<&Path>, no_ping: bool) -> Result<HidDevice> {
     let candidates: Vec<DetectedDevice> = if let Some(path) = device {
         let proto = get_protocol_for_device(path).unwrap_or_else(|| {
-            warn!("Unknown PID for {}, assuming dongle protocol", path.display());
+            warn!(
+                "Unknown PID for {}, assuming dongle protocol",
+                path.display()
+            );
             Protocol::Dongle
         });
         vec![DetectedDevice {

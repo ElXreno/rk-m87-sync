@@ -131,7 +131,7 @@ cmdId numbers for the same operation**. Both tables below were derived from
 | 0x03  | SetMacro         | W   | Macro data, 512-byte chunks (multi-packet)       |
 | 0x04  | SetLED           | W   | 128-byte LED config                              |
 | 0x06  | ResetDevice      | W   | Empty payload (was previously documented as 0x11) |
-| 0x07  | GetDongleStatus  | R   | 1 byte: 0 = wireless connected                   |
+| 0x07  | GetDongleStatus  | R   | 1 byte: 1 = keyboard reachable, 0 = asleep/away (see §10) |
 | 0x09  | SetLedRgbTab     | W   | RGB LED table                                    |
 | 0x0B  | **SetScreenParam** | W | **SysParam: time, volume, CPU, memory (see §5)** |
 | 0x0C–0x0F | ⚠ dangerous | W   | Reset/freeze the LCD clock — DO NOT scan        |
@@ -616,6 +616,27 @@ In dongle mode, the keyboard may be powered off while the dongle is
 plugged in. The daemon sends cmdId `0x07` (`GetDongleStatus`) with an empty
 payload and accepts any non-error response as proof of life. This is a
 genuine read with no side effects.
+
+The dongle answers on its own, so a reply only proves the dongle is
+present. The payload byte carries the wireless link state:
+
+```text
+13 07 01 00 01 01 00 00 ... 1d   keyboard awake, acknowledges SysParam
+13 07 01 00 01 00 00 00 ... 1c   keyboard asleep, SysParam gets no reply
+                    ^^ payload byte
+```
+
+Measured live on an M87 dongle (PID 0x0150, August 2026): the byte sat at
+`01` while syncs succeeded, flipped to `00` at the moment the keyboard
+fell asleep, and a SysParam sent in that state timed out. Earlier
+revisions of this document claimed `0 = wireless connected`, which is the
+opposite of the observed behaviour.
+
+The daemon uses this byte to tell "keyboard asleep" apart from "device
+gone": an unacknowledged SysParam keeps the hidraw handle open and
+switches to polling `0x07` every 10 s, and the pending sync is delivered
+as soon as the byte returns to `01`. Only a dongle that stops answering
+`0x07` altogether counts as a disconnect and triggers a reconnect.
 
 The earlier daemon implementation sent cmdId `0x09` with a 3-byte payload
 `[0x0E, 0xDE, 0xAD]`. That is actually `SetLedRgbTab`, so each session

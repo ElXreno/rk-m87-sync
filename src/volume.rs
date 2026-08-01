@@ -21,10 +21,7 @@ pub enum DaemonEvent {
 
 /// Spawn a PA monitoring thread. Sends VolumeChanged on sink events,
 /// PulseDisconnected on PA error, and exits when shutdown flag is set.
-pub fn spawn_pulse_thread(
-    tx: Sender<DaemonEvent>,
-    shutdown: Arc<AtomicBool>,
-) -> JoinHandle<()> {
+pub fn spawn_pulse_thread(tx: Sender<DaemonEvent>, shutdown: Arc<AtomicBool>) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("pa-monitor".into())
         .spawn(move || {
@@ -42,10 +39,7 @@ fn run_pulse_monitor(tx: &Sender<DaemonEvent>, shutdown: &AtomicBool) -> Result<
     let (mut query_ml, mut query_ctx) = pa_connect("rk-m87-query")?;
 
     // Subscribe to sink events
-    event_ctx.subscribe(
-        pulse::context::subscribe::InterestMaskSet::SINK,
-        |_| {},
-    );
+    event_ctx.subscribe(pulse::context::subscribe::InterestMaskSet::SINK, |_| {});
 
     let got_event = Arc::new(AtomicBool::new(false));
     let got_event_cb = Arc::clone(&got_event);
@@ -83,9 +77,7 @@ fn run_pulse_monitor(tx: &Sender<DaemonEvent>, shutdown: &AtomicBool) -> Result<
         // poll() may return Err on signal — treat as non-fatal, just continue
         let _ = event_ml.poll();
 
-        event_ml
-            .dispatch()
-            .map_err(|_| Error::PulseDisconnected)?;
+        event_ml.dispatch().map_err(|_| Error::PulseDisconnected)?;
 
         if got_event.swap(false, Ordering::Relaxed) {
             // Sink event fired — query volume
@@ -184,10 +176,7 @@ fn query_volume(query_ml: &mut Mainloop, query_ctx: &Context) -> Result<u8> {
 /// Connect a PulseAudio context and block until ready.
 fn pa_connect(app_name: &str) -> Result<(Mainloop, Context)> {
     let mut proplist = Proplist::new().ok_or_else(|| Error::PulseConnect("proplist".into()))?;
-    let _ = proplist.set_str(
-        pulse::proplist::properties::APPLICATION_NAME,
-        app_name,
-    );
+    let _ = proplist.set_str(pulse::proplist::properties::APPLICATION_NAME, app_name);
 
     let mut ml =
         Mainloop::new().ok_or_else(|| Error::PulseConnect("mainloop creation failed".into()))?;
